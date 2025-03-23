@@ -11,4 +11,6 @@ point = { slot = 140522340, hash = "8ee13d0669f7860832214e8dbc8173d2ebe7855f66ff
 type = "Stdout"
 
 [retries]
-max_retries = 5
+max_retries = 8
+backoff_unit_sec = 0.01
+backoff_factor = 5

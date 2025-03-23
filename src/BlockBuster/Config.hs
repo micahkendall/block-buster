@@ -4,6 +4,7 @@ module BlockBuster.Config where
 
 import Cardano.Api qualified as CApi
 import Cardano.Chain.Epoch.File (mainnetEpochSlots)
+import Control.Applicative ((<|>))
 import Control.Retry (RetryPolicyM, RetryStatus (..), capDelay, limitRetries, retryPolicy)
 import Data.Maybe (fromMaybe)
 import Data.Proxy (Proxy (..))
@@ -84,9 +85,9 @@ intersectionCodec =
 
 data RetriesConfig = RetriesConfig
   { maxRetries :: Integer,
-    backoffUnitSec :: Integer,
-    backoffFactor :: Integer,
-    maxBackoffSec :: Integer
+    backoffUnitSec :: Double,
+    backoffFactor :: Double,
+    maxBackoffSec :: Double
   }
   deriving stock (Show)
 
@@ -103,14 +104,16 @@ retriesCodec :: TomlCodec RetriesConfig
 retriesCodec =
   Toml.table
     ( RetriesConfig
-        <$> usingDefault "max_retries" maxRetries
-        <*> usingDefault "backoff_unit_sec" backoffUnitSec
-        <*> usingDefault "backoff_factor" backoffFactor
-        <*> usingDefault "max_backoff_sec" maxBackoffSec
+        <$> usingDefault Toml.integer "max_retries" maxRetries
+        <*> usingDefault double "backoff_unit_sec" backoffUnitSec
+        <*> usingDefault double "backoff_factor" backoffFactor
+        <*> usingDefault double "max_backoff_sec" maxBackoffSec
     )
     "retries"
   where
-    usingDefault key accessor = (fromMaybe (accessor defaultRetriesConfig) <$> Toml.dioptional (Toml.integer key)) .= Just . accessor
+    usingDefault type' key accessor = (fromMaybe (accessor defaultRetriesConfig) <$> Toml.dioptional (type' key)) .= Just . accessor
+    -- So 1 is parsed as 1.0
+    double key = Toml.double key <|> (fromIntegral <$> Toml.integer key .= round)
 
 data DaemonConfig = DaemonConfig
   { source :: NodeConfig,
@@ -152,17 +155,17 @@ getRetryPolicy
       maxBackoffSec
     } =
     capDelay
-      (secondsToMicroseconds . fromIntegral $ maxBackoffSec)
+      (round . secondsToMicroseconds $ maxBackoffSec)
       (backoffPolicy <> (limitRetries . fromIntegral $ maxRetries))
     where
-      secondsToMicroseconds :: Int -> Int
-      secondsToMicroseconds = (* (10 ^ 6))
+      secondsToMicroseconds :: Double -> Double
+      secondsToMicroseconds = (* (10 ** 6))
       backoffPolicy :: (Monad m) => RetryPolicyM m
       backoffPolicy = retryPolicy $
-        \RetryStatus {rsIterNumber} -> Just $! backoffFn (rsIterNumber + 1)
+        \RetryStatus {rsIterNumber} -> Just $! round . backoffFn $ (fromIntegral rsIterNumber + 1)
 
-      backoffFn :: Int -> Int
-      backoffFn x = secondsToMicroseconds ((x ^ backoffFactor) * fromIntegral backoffUnitSec)
+      backoffFn :: Double -> Double
+      backoffFn x = secondsToMicroseconds ((x ** backoffFactor) * backoffUnitSec)
 
 getDaemonRetryPolicy :: (Monad m) => DaemonConfig -> RetryPolicyM m
 getDaemonRetryPolicy = getRetryPolicy . retries
